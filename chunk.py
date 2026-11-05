@@ -75,19 +75,20 @@ _HEADING_CUES = {
 }
 
 
+# removes extra whitespace and punctuation
 def _clean_heading(line: str) -> str:
     cleaned = line.strip()
     cleaned = re.sub(r"^[#*\s]+|[#*_\s]+$", "", cleaned)
     cleaned = re.sub(r"[\s:.,;]+$", "", cleaned)
     return re.sub(r"\s+", " ", cleaned)
 
-
+# checks if a line matches a known heading and returns its standarized name
 def _heading(line: str) -> str | None:
     """Return a canonical label for a recognized heading spelling."""
     cleaned = _clean_heading(line)
     return _HEADING_ALIASES.get(cleaned.lower())
 
-
+# identifies possible section headings that aren't in predifined list, uses capitalization, length, and common heading keywords
 def _likely_unlisted_heading(line: str) -> str | None:
     """Conservatively recognize short, standalone title-like heading lines."""
     cleaned = _clean_heading(line)
@@ -113,7 +114,7 @@ def _likely_unlisted_heading(line: str) -> str | None:
         return cleaned
     return None
 
-
+# splits long text into smaller parts, but keeps small overlap to preserve context
 def _split_long(text: str, size: int, overlap: int) -> list[str]:
     """Split oversized text near whitespace, retaining a small character overlap."""
     parts = []
@@ -133,7 +134,7 @@ def _split_long(text: str, size: int, overlap: int) -> list[str]:
         start = next_start
     return parts
 
-
+# organizes pdf text into chunks based on headings and size, while keeping track of page numbers
 def chunk_text(pages: Iterable[Mapping], chunk_size: int = 1000,
                overlap: int = 100) -> list[dict[str, object]]:
     """Turn parse_pdf page records into retrieval chunks.
