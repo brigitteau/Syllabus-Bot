@@ -4,11 +4,11 @@ import streamlit as st
 import docx
 import pdfplumber
 
-from parse import parse_pdf, parse_text
-from chunk import chunk_text
-from embed import embed_chunks, embed_question
-from retrieve import retrieve
-from llm import generate_answer
+from src.parse import parse_pdf, parse_text
+from src.chunk import chunk_text
+from src.embed import embed_chunks, embed_question
+from src.retrieve import retrieve
+from src.llm import generate_answer
 
 
 st.set_page_config(page_title="Syllabus Q&A", page_icon="📚")
