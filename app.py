@@ -10,10 +10,14 @@ from src.embed import embed_chunks, embed_question
 from src.retrieve import retrieve
 from src.llm import generate_answer, NOT_FOUND
 from src.contact import find_professor_email
+from src.ui import apply_style, browser_bar, hero, sidebar_heading
 
 
-st.set_page_config(page_title="Syllabus Q&A", page_icon="📚")
-st.title("Syllabus Q&A")
+st.set_page_config(page_title="Syllabus Q and A", page_icon="📚")
+apply_style()
+browser_bar()
+if not st.session_state.get("messages"):
+    hero()
 
 @st.cache_data(show_spinner=False)
 def extract_text(file_bytes, filename):
@@ -51,6 +55,7 @@ def show_sources(sources):
 
 # Sidebar: syllabus upload or paste
 with st.sidebar:
+    sidebar_heading()
     uploaded = st.file_uploader("Upload a syllabus", type=["pdf", "docx", "txt"])
     pasted = st.text_area("Or paste your syllabus text", height=250)
 
