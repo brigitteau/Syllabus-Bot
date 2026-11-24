@@ -1,8 +1,9 @@
 import hashlib
 import io
+from collections import Counter
+
 import streamlit as st
 import docx
-import pdfplumber
 
 from src.parse import parse_pdf, parse_text
 from src.chunk import chunk_text
@@ -14,17 +15,12 @@ from src.llm import generate_answer
 st.set_page_config(page_title="Syllabus Q&A", page_icon="📚")
 st.title("Syllabus Q&A")
 
-@st.cache_data(show_spinner=False)
 def extract_text(file_bytes, filename):
-    """Pull plain text out of a PDF, DOCX, or TXT upload."""
+    """Pull plain text out of a DOCX or TXT upload."""
     name = filename.lower()
 
     if name.endswith(".txt"):
         return file_bytes.decode("utf-8", errors="ignore")
-
-    if name.endswith(".pdf"):
-        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-            return "\n".join(page.extract_text() or "" for page in pdf.pages)
 
     if name.endswith(".docx"):
         d = docx.Document(io.BytesIO(file_bytes))
@@ -45,62 +41,84 @@ if "messages" not in st.session_state:
 def show_sources(sources):
     with st.expander("Sources used"):
         for s in sources:
-            st.caption(f"{s['section']} | page {s['pages']} | similarity {s['score']:.2f}")
+            st.caption(
+                f"{s['filename']} | {s['section']} | page {s['pages']} | similarity {s['score']:.2f}"
+            )
             st.text(s["text"])
 
 # Sidebar: syllabus upload or paste
 with st.sidebar:
-    uploaded = st.file_uploader("Upload a syllabus", type=["pdf", "docx", "txt"])
+    uploaded = st.file_uploader(
+        "Upload syllabi", type=["pdf", "docx", "txt"], accept_multiple_files=True
+    )
     pasted = st.text_area("Or paste your syllabus text", height=250)
 
-syllabus_text = ""
-source_name = ""
-
-if uploaded is not None:
-    source_name = uploaded.name
-    try:
-        syllabus_text = extract_text(uploaded.getvalue(), uploaded.name)
-    except Exception as e:
-        st.error(f"Couldn't read {uploaded.name}: {e}")
-        st.stop()
-    if not syllabus_text.strip():
-        st.warning(
-            "No text found in that file. If it's a scanned PDF (an image of "
-            "pages), it can't be read yet. Try pasting the text instead."
-        )
-        st.stop()
+if uploaded:
+    inputs = [(file.name, file.getvalue()) for file in uploaded]
 elif pasted.strip():
-    source_name = "pasted text"
-    syllabus_text = pasted
+    inputs = [("pasted text", pasted.encode("utf-8"))]
+else:
+    inputs = []
 
-if not syllabus_text:
-    st.info("Upload a syllabus or paste its text in the sidebar to get started.")
+# Reuse indexes for unchanged files and discard indexes for removed files.
+files = {(name, hashlib.sha256(data).digest()): data for name, data in inputs}
+file_ids = frozenset(files)
+if st.session_state.get("file_ids") != file_ids:
+    st.session_state.file_ids = file_ids
+    st.session_state.messages = []
+    st.session_state.pop("syllabus_scope", None)
+
+previous_indexes = st.session_state.get("syllabus_indexes", {})
+indexes = {}
+for file_id, data in files.items():
+    if file_id in previous_indexes:
+        indexes[file_id] = previous_indexes[file_id]
+        continue
+
+    filename, _ = file_id
+    try:
+        with st.spinner(f"Reading and indexing {filename}..."):
+            if filename.lower().endswith(".pdf"):
+                pages = parse_pdf(io.BytesIO(data))
+            elif uploaded:
+                pages = parse_text(extract_text(data, filename))
+            else:
+                pages = parse_text(pasted)
+            chunks = chunk_text(pages)
+            if not chunks:
+                st.warning(f"No readable text in {filename}. Scanned PDFs need OCR.")
+                continue
+            indexes[file_id] = (chunks, embed_chunks(chunks))
+    except Exception as e:
+        st.error(f"Could not process {filename}: {e}")
+
+st.session_state.syllabus_indexes = indexes
+if not files:
+    st.info("Upload syllabi or paste syllabus text in the sidebar to get started.")
+    st.stop()
+if not indexes:
+    st.button("Retry indexing")
     st.stop()
 
-# Build the index only when the syllabus changes. Streamlit reruns this script
-# on every message, so without this check it would re-embed the syllabus each time.
-source_bytes = uploaded.getvalue() if uploaded is not None else syllabus_text.encode("utf-8")
-file_id = hashlib.sha256(source_name.encode("utf-8") + b"\0" + source_bytes).hexdigest()
+name_counts = Counter(filename for filename, _ in indexes)
+name_numbers = Counter()
+source_labels = {}
+for file_id in indexes:
+    filename, _ = file_id
+    name_numbers[filename] += 1
+    source_labels[file_id] = (
+        f"{filename} ({name_numbers[filename]})" if name_counts[filename] > 1 else filename
+    )
 
-if st.session_state.get("file_id") != file_id:
-    try:
-        with st.spinner("Reading and indexing your syllabus..."):
-            if uploaded is not None and uploaded.name.lower().endswith(".pdf"):
-                pages = parse_pdf(io.BytesIO(source_bytes))               # parse.py: file -> page records
-            else:
-                pages = parse_text(syllabus_text)
-            chunks = chunk_text(pages)                                    # chunk.py: pages -> chunks
-            if not chunks:
-                raise ValueError("No text found. If this is a scanned PDF, it needs OCR first.")
-            st.session_state.chunks = chunks
-            st.session_state.embeddings = embed_chunks(chunks)            # embed.py: chunks -> vectors
-            st.session_state.file_id = file_id
-            st.session_state.messages = []
-    except Exception as e:
-        st.error(f"Could not process this file: {e}")
-        st.stop()
-
-st.success(f"Loaded: {source_name}")
+st.success(f"Loaded: {', '.join(source_labels.values())}")
+scope = None
+if len(indexes) > 1:
+    scope = st.sidebar.selectbox(
+        "Search in",
+        [None, *indexes],
+        format_func=lambda file_id: "All syllabi" if file_id is None else source_labels[file_id],
+        key="syllabus_scope",
+    )
 
 # Show past messages
 for m in st.session_state.messages:
@@ -110,7 +128,7 @@ for m in st.session_state.messages:
             show_sources(m["sources"])
 
 # Chat box
-if question := st.chat_input("Ask about the syllabus"):
+if question := st.chat_input("Ask about your syllabi"):
     st.session_state.messages.append({"role": "user", "content": question})
     with st.chat_message("user"):
         st.markdown(question)
@@ -118,23 +136,30 @@ if question := st.chat_input("Ask about the syllabus"):
     with st.chat_message("assistant"):
         sources = []
         try:
-            with st.spinner("Searching the syllabus..."):
-                results = retrieve(                                       # retrieve.py: question -> top chunks
-                    question,
-                    st.session_state.chunks,
-                    embed_question=embed_question,                        # embed.py: question -> vector
-                    chunk_embeddings=st.session_state.embeddings,
-                )
-                top = [st.session_state.chunks[r["index"]] for r in results]
-                for c, r in zip(top, results):
-                    sources.append({
-                        "section": c["section"] or "General",
-                        "pages": ", ".join(str(p) for p in c["pages"]),
-                        "score": r["score"],
-                        "text": c["text"],
-                    })
-                # llm.py joins plain strings, so give it text with the section and page attached
-                context = [f"[{s['section']} | page {s['pages']}]\n{s['text']}" for s in sources]
+            with st.spinner("Searching your syllabi..."):
+                question_vector = embed_question(question.strip())
+                # Search each selected syllabus so comparisons get evidence from every file.
+                for file_id in indexes if scope is None else [scope]:
+                    chunks, embeddings = indexes[file_id]
+                    results = retrieve(
+                        question,
+                        chunks,
+                        embed_question=lambda _: question_vector,
+                        chunk_embeddings=embeddings,
+                    )
+                    for result in results:
+                        chunk = chunks[result["index"]]
+                        sources.append({
+                            "filename": source_labels[file_id],
+                            "section": chunk["section"] or "General",
+                            "pages": ", ".join(str(page) for page in chunk["pages"]),
+                            "score": result["score"],
+                            "text": chunk["text"],
+                        })
+                context = [
+                    f"[{s['filename']} | {s['section']} | page {s['pages']}]\n{s['text']}"
+                    for s in sources
+                ]
                 answer = generate_answer(question, context) or "I couldn't generate an answer. Please try again."
         except Exception as e:
             answer, sources = f"Sorry, something went wrong: {e}", []

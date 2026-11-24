@@ -50,7 +50,7 @@ _HEADING_ALIASES = {
     "exam policy": "Exams",
     "collaboration and academic integrity": "Academic Integrity",
     "instructor office hours": "Office Hours",
-    "ta office hours": "Office Hours",
+    "ta office hours": "TA Office Hours",
     "required textbook": "Textbooks",
     "required textbooks": "Textbooks",
     "suggested textbook": "Textbooks",

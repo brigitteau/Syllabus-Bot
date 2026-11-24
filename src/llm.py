@@ -16,8 +16,10 @@ MODELS = [
 
 INSTRUCTIONS = (
     "You are a course syllabus assistant. Answer the student's question "
-    "using ONLY the syllabus excerpts provided. If the answer is not in the "
-    "excerpts, say you couldn't find it in the syllabus. Be concise."
+    "using ONLY the syllabus excerpts provided. Cite the filename and page for "
+    "your answer. When comparing syllabi, distinguish which policy belongs to "
+    "which file and say when an excerpt does not establish a policy. If the "
+    "answer is not in the excerpts, say you couldn't find it. Be concise."
 )
 
 
