@@ -8,7 +8,8 @@ from src.parse import parse_pdf, parse_text
 from src.chunk import chunk_text
 from src.embed import embed_chunks, embed_question
 from src.retrieve import retrieve
-from src.llm import generate_answer
+from src.llm import generate_answer, NOT_FOUND
+from src.contact import find_professor_email
 
 
 st.set_page_config(page_title="Syllabus Q&A", page_icon="📚")
@@ -93,6 +94,7 @@ if st.session_state.get("file_id") != file_id:
             if not chunks:
                 raise ValueError("No text found. If this is a scanned PDF, it needs OCR first.")
             st.session_state.chunks = chunks
+            st.session_state.prof_email = find_professor_email(syllabus_text)
             st.session_state.embeddings = embed_chunks(chunks)            # embed.py: chunks -> vectors
             st.session_state.file_id = file_id
             st.session_state.messages = []
@@ -136,6 +138,13 @@ if question := st.chat_input("Ask about the syllabus"):
                 # llm.py joins plain strings, so give it text with the section and page attached
                 context = [f"[{s['section']} | page {s['pages']}]\n{s['text']}" for s in sources]
                 answer = generate_answer(question, context) or "I couldn't generate an answer. Please try again."
+                if NOT_FOUND in answer:
+                    email = st.session_state.get("prof_email")
+                    if email:
+                        answer = f"I couldn't find that in the syllabus. You can ask your professor at **{email}**."
+                    else:
+                        answer = "I couldn't find that in the syllabus, and no professor email was listed. Try asking your professor directly."
+                    sources = []
         except Exception as e:
             answer, sources = f"Sorry, something went wrong: {e}", []
         st.markdown(answer)
